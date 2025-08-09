@@ -1,0 +1,183 @@
+# ============================================================
+# 1. IMPORT LIBRARIES
+# ============================================================
+import pandas as pd  # Data manipulation
+import numpy as np   # Numerical computations
+from sklearn.metrics.pairwise import cosine_similarity  # Cosine similarity
+from sklearn.metrics import mean_squared_error  # Error metric
+import math  # Math functions
+import matplotlib.pyplot as plt  # Visualisation
+
+# ============================================================
+# 2. LOAD AND PREPARE DATA
+# ============================================================
+
+# Load ratings and movies datasets
+ratings = pd.read_csv('ratings.csv')  # Ratings file
+movies = pd.read_csv('movies.csv')    # Movies metadata
+
+# Select top 500 most-rated movies
+top_movies = ratings['movieId'].value_counts().nlargest(500).index
+ratings_small = ratings[ratings['movieId'].isin(top_movies)]  # Filter ratings
+movies_small = movies[movies['movieId'].isin(top_movies)]      # Filter movies
+
+# Create user-item matrix (rows = users, cols = movies, fill missing with 0)
+rating_matrix = ratings_small.pivot_table(
+    index='userId',
+    columns='movieId',
+    values='rating',
+    fill_value=0
+)
+
+# Convert DataFrame to NumPy array for fast computation
+R = rating_matrix.values
+
+# ============================================================
+# 3. COMPUTE SIMILARITY MATRICES
+# ============================================================
+
+item_sim = cosine_similarity(R.T)  # Item-item similarity
+user_sim = cosine_similarity(R)    # User-user similarity
+
+# ============================================================
+# 4. PREDICTION FUNCTIONS
+# ============================================================
+
+# ---- Item-based collaborative filtering ----
+def predict_item_based(user_idx, sim_matrix, R, k=20):
+    """
+    Predict ratings for a given user using item-based CF.
+    """
+    user_ratings = R[user_idx]  # Ratings by this user
+    preds = []  # Store predictions
+    for i in range(R.shape[1]):  # Loop over items
+        if user_ratings[i] != 0:  # Already rated
+            preds.append(user_ratings[i])
+            continue
+        sims = sim_matrix[i]  # Similarity to all items
+        mask = user_ratings != 0  # Only consider rated items
+        sims_masked = sims[mask]  # Filter similarities
+        ratings = user_ratings[mask]  # Filter ratings
+        if len(ratings) == 0:  # No ratings to base prediction on
+            preds.append(np.nan)
+            continue
+        top_k_idx = np.argsort(sims_masked)[-k:]  # Top-k similar items
+        num = np.dot(sims_masked[top_k_idx], ratings[top_k_idx])  # Weighted sum
+        den = np.sum(np.abs(sims_masked[top_k_idx]))  # Sum of weights
+        preds.append(num / den if den != 0 else np.nan)  # Average
+    return np.array(preds)
+
+# ---- User-based collaborative filtering ----
+def predict_user_based(user_idx, sim_matrix, R, k=20):
+    """
+    Predict ratings for a given user using user-based CF.
+    """
+    preds = []
+    for i in range(R.shape[1]):  # Loop over items
+        if R[user_idx, i] != 0:  # Already rated
+            preds.append(R[user_idx, i])
+            continue
+        mask = R[:, i] != 0  # Users who rated this item
+        sims = sim_matrix[user_idx][mask]  # Similarity to those users
+        ratings = R[:, i][mask]  # Ratings from those users
+        if len(ratings) == 0:  # No ratings to use
+            preds.append(np.nan)
+            continue
+        top_k_idx = np.argsort(sims)[-k:]  # Top-k similar users
+        num = np.dot(sims[top_k_idx], ratings[top_k_idx])  # Weighted sum
+        den = np.sum(np.abs(sims[top_k_idx]))  # Sum of weights
+        preds.append(num / den if den != 0 else np.nan)  # Average
+    return np.array(preds)
+
+# ============================================================
+# 5. EVALUATION (RMSE)
+# ============================================================
+
+def rmse(true, pred):
+    """Compute Root Mean Squared Error."""
+    return math.sqrt(mean_squared_error(true, pred))
+
+# Collect true and predicted ratings
+y_true_item, y_pred_item = [], []
+y_true_user, y_pred_user = [], []
+
+# Generate predictions for all users
+for u in range(R.shape[0]):  # For each user
+    preds_item = predict_item_based(u, item_sim, R)
+    preds_user = predict_user_based(u, user_sim, R)
+    for i in range(R.shape[1]):  # For each item
+        if R[u, i] != 0:  # If rating exists
+            y_true_item.append(R[u, i])
+            y_pred_item.append(preds_item[i])
+            y_true_user.append(R[u, i])
+            y_pred_user.append(preds_user[i])
+
+# Display RMSE results
+print(f"Approx RMSE (item-based cosine, top 500 movies): {rmse(np.array(y_true_item), np.array(y_pred_item)):.3f}")
+print(f"Approx RMSE (user-based cosine, top 500 movies): {rmse(np.array(y_true_user), np.array(y_pred_user)):.3f}")
+
+# ============================================================
+# 6. RECOMMENDATION FUNCTION
+# ============================================================
+
+def recommend_for_user(user_id, R, sim_matrix, mode='item', top_n=5, k=20):
+    """
+    Recommend top-N movies for a given user.
+    """
+    user_idx = user_id - 1  # Convert to 0-based index
+    if mode == 'item':
+        preds = predict_item_based(user_idx, sim_matrix, R, k=k)
+    elif mode == 'user':
+        preds = predict_user_based(user_idx, sim_matrix, R, k=k)
+    else:
+        raise ValueError("mode must be 'item' or 'user'")
+    already_rated = R[user_idx] != 0  # Movies already rated
+    preds[already_rated] = -np.inf  # Exclude rated movies
+    top_idx = np.argsort(preds)[-top_n:][::-1]  # Top-N recommendations
+    movie_ids = [rating_matrix.columns[i] for i in top_idx]
+    info = movies_small.set_index('movieId').loc[movie_ids][['title', 'genres']]
+    pred_scores = preds[top_idx]
+    return list(zip(info['title'], info['genres'], pred_scores))
+
+# ============================================================
+# 7. VISUALISATION FUNCTION
+# ============================================================
+
+def plot_recommendations(user_id, R, sim_matrix, mode='item', top_n=5, k=20):
+    """
+    Plot top-N recommended movies for a given user.
+    """
+    recs = recommend_for_user(user_id, R, sim_matrix, mode=mode, top_n=top_n, k=k)
+    titles = [title for title, _, _ in recs]
+    scores = [score for _, _, score in recs]
+
+    plt.figure(figsize=(10, 6))
+    bars = plt.barh(titles[::-1], scores[::-1], color='skyblue')
+    plt.xlabel("Predicted Rating")
+    plt.ylabel("Movie Title")
+    plt.title(f"Top {top_n} Recommendations for User {user_id} ({mode.capitalize()}-based CF)")
+    plt.xlim(0, 5)
+    plt.grid(axis='x', linestyle='--', alpha=0.7)
+
+    for bar, score in zip(bars, scores[::-1]):
+        plt.text(score + 0.05, bar.get_y() + bar.get_height()/2,
+                 f"{score:.2f}", va='center')
+
+    plt.show()
+
+# ============================================================
+# 8. DEMO OUTPUT
+# ============================================================
+
+# Print recommendations in text
+print("\nTop 5 recommendations for User 1 (Item-based):")
+for title, genres, score in recommend_for_user(1, R, item_sim, mode='item'):
+    print(f"{title} | Genres: {genres} | Predicted rating: {score:.2f}")
+
+print("\nTop 5 recommendations for User 1 (User-based):")
+for title, genres, score in recommend_for_user(1, R, user_sim, mode='user'):
+    print(f"{title} | Genres: {genres} | Predicted rating: {score:.2f}")
+
+# Show visualisation for User 1
+plot_recommendations(1, R, item_sim, mode='item', top_n=5)
+plot_recommendations(1, R, user_sim, mode='user', top_n=5)

@@ -1,156 +1,159 @@
-# ============================================================
-# 1. IMPORT LIBRARIES
-# ============================================================
-import pandas as pd  # Data manipulation
-import numpy as np   # Numerical computations
-from sklearn.metrics.pairwise import cosine_similarity  # Cosine similarity
-from sklearn.metrics import mean_squared_error  # Error metric
-import math  # Math functions
-import matplotlib.pyplot as plt  # Visualisation
+# ============================================
+# 1. Import Libraries
+# ============================================
+import pandas as pd
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import train_test_split
+import math
+import matplotlib.pyplot as plt
 
-# ============================================================
-# 2. LOAD AND PREPARE DATA
-# ============================================================
+# ============================================
+# 2. Load & Prepare Data
+# ============================================
+ratings = pd.read_csv('ratings.csv')
+movies = pd.read_csv('movies.csv')
 
-# Load ratings and movies datasets
-ratings = pd.read_csv('ratings.csv')  # Ratings file
-movies = pd.read_csv('movies.csv')    # Movies metadata
-
-# Select top 500 most-rated movies
+# Keep top 500 most-rated movies
 top_movies = ratings['movieId'].value_counts().nlargest(500).index
-ratings_small = ratings[ratings['movieId'].isin(top_movies)]  # Filter ratings
-movies_small = movies[movies['movieId'].isin(top_movies)]      # Filter movies
+ratings_small = ratings[ratings['movieId'].isin(top_movies)]
+movies_small = movies[movies['movieId'].isin(top_movies)]
 
-# Create user-item matrix (rows = users, cols = movies, fill missing with 0)
-rating_matrix = ratings_small.pivot_table(
-    index='userId',
-    columns='movieId',
-    values='rating',
-    fill_value=0
-)
+# ============================================
+# 3. Train/Test Split (Per User)
+# ============================================
+train_list, test_list = [], []
+for uid, group in ratings_small.groupby('userId'):
+    if len(group) >= 2:
+        train, test = train_test_split(group, test_size=0.2, random_state=42)
+    else:
+        train, test = group, pd.DataFrame(columns=group.columns)
+    train_list.append(train)
+    test_list.append(test)
 
-# Convert DataFrame to NumPy array for fast computation
-R = rating_matrix.values
+train_ratings = pd.concat(train_list)
+test_ratings = pd.concat(test_list)
 
-# ============================================================
-# 3. COMPUTE SIMILARITY MATRICES
-# ============================================================
+# ============================================
+# 4. Create User-Item Matrices
+# ============================================
+rating_matrix_train = train_ratings.pivot_table(index='userId', columns='movieId', values='rating', fill_value=0)
+rating_matrix_test = test_ratings.pivot_table(index='userId', columns='movieId', values='rating', fill_value=0)
 
-item_sim = cosine_similarity(R.T)  # Item-item similarity
-user_sim = cosine_similarity(R)    # User-user similarity
+R_train = rating_matrix_train.values
+R_test = rating_matrix_test.values
 
-# ============================================================
-# 4. PREDICTION FUNCTIONS
-# ============================================================
+# ============================================
+# 5. Compute Similarities (Train Only)
+# ============================================
+item_sim = cosine_similarity(R_train.T)
+user_sim = cosine_similarity(R_train)
 
-# ---- Item-based collaborative filtering ----
+# ============================================
+# 6. Prediction Functions
+# ============================================
 def predict_item_based(user_idx, sim_matrix, R, k=20):
-    """
-    Predict ratings for a given user using item-based CF.
-    """
-    user_ratings = R[user_idx]  # Ratings by this user
-    preds = []  # Store predictions
-    for i in range(R.shape[1]):  # Loop over items
-        if user_ratings[i] != 0:  # Already rated
+    """Predict ratings for a user using item-based collaborative filtering."""
+    user_ratings = R[user_idx]
+    preds = []
+    for i in range(R.shape[1]):
+        if user_ratings[i] != 0:
             preds.append(user_ratings[i])
             continue
-        sims = sim_matrix[i]  # Similarity to all items
-        mask = user_ratings != 0  # Only consider rated items
-        sims_masked = sims[mask]  # Filter similarities
-        ratings = user_ratings[mask]  # Filter ratings
-        if len(ratings) == 0:  # No ratings to base prediction on
+        sims = sim_matrix[i]
+        mask = user_ratings != 0
+        sims_masked = sims[mask]
+        ratings = user_ratings[mask]
+        if len(ratings) == 0:
             preds.append(np.nan)
             continue
-        top_k_idx = np.argsort(sims_masked)[-k:]  # Top-k similar items
-        num = np.dot(sims_masked[top_k_idx], ratings[top_k_idx])  # Weighted sum
-        den = np.sum(np.abs(sims_masked[top_k_idx]))  # Sum of weights
-        preds.append(num / den if den != 0 else np.nan)  # Average
+        top_k_idx = np.argsort(sims_masked)[-k:]
+        num = np.dot(sims_masked[top_k_idx], ratings[top_k_idx])
+        den = np.sum(np.abs(sims_masked[top_k_idx]))
+        preds.append(num / den if den != 0 else np.nan)
     return np.array(preds)
 
-# ---- User-based collaborative filtering ----
 def predict_user_based(user_idx, sim_matrix, R, k=20):
-    """
-    Predict ratings for a given user using user-based CF.
-    """
+    """Predict ratings for a user using user-based collaborative filtering."""
     preds = []
-    for i in range(R.shape[1]):  # Loop over items
-        if R[user_idx, i] != 0:  # Already rated
+    for i in range(R.shape[1]):
+        if R[user_idx, i] != 0:
             preds.append(R[user_idx, i])
             continue
-        mask = R[:, i] != 0  # Users who rated this item
-        sims = sim_matrix[user_idx][mask]  # Similarity to those users
-        ratings = R[:, i][mask]  # Ratings from those users
-        if len(ratings) == 0:  # No ratings to use
+        mask = R[:, i] != 0
+        sims = sim_matrix[user_idx][mask]
+        ratings = R[:, i][mask]
+        if len(ratings) == 0:
             preds.append(np.nan)
             continue
-        top_k_idx = np.argsort(sims)[-k:]  # Top-k similar users
-        num = np.dot(sims[top_k_idx], ratings[top_k_idx])  # Weighted sum
-        den = np.sum(np.abs(sims[top_k_idx]))  # Sum of weights
-        preds.append(num / den if den != 0 else np.nan)  # Average
+        top_k_idx = np.argsort(sims)[-k:]
+        num = np.dot(sims[top_k_idx], ratings[top_k_idx])
+        den = np.sum(np.abs(sims[top_k_idx]))
+        preds.append(num / den if den != 0 else np.nan)
     return np.array(preds)
 
-# ============================================================
-# 5. EVALUATION (RMSE)
-# ============================================================
-
+# ============================================
+# 7. RMSE Calculation
+# ============================================
 def rmse(true, pred):
-    """Compute Root Mean Squared Error."""
-    return math.sqrt(mean_squared_error(true, pred))
+    """Root Mean Squared Error ignoring NaNs."""
+    mask = ~np.isnan(pred)
+    return math.sqrt(mean_squared_error(true[mask], pred[mask]))
 
-# Collect true and predicted ratings
+# ============================================
+# 8. Evaluate Model on Test Set
+# ============================================
 y_true_item, y_pred_item = [], []
 y_true_user, y_pred_user = [], []
 
-# Generate predictions for all users
-for u in range(R.shape[0]):  # For each user
-    preds_item = predict_item_based(u, item_sim, R)
-    preds_user = predict_user_based(u, user_sim, R)
-    for i in range(R.shape[1]):  # For each item
-        if R[u, i] != 0:  # If rating exists
-            y_true_item.append(R[u, i])
+for u in range(R_test.shape[0]):
+    preds_item = predict_item_based(u, item_sim, R_train)
+    preds_user = predict_user_based(u, user_sim, R_train)
+    for i in range(R_test.shape[1]):
+        if R_test[u, i] != 0:  # Only test ratings
+            y_true_item.append(R_test[u, i])
             y_pred_item.append(preds_item[i])
-            y_true_user.append(R[u, i])
+            y_true_user.append(R_test[u, i])
             y_pred_user.append(preds_user[i])
 
-# Display RMSE results
-print(f"Approx RMSE (item-based cosine, top 500 movies): {rmse(np.array(y_true_item), np.array(y_pred_item)):.3f}")
-print(f"Approx RMSE (user-based cosine, top 500 movies): {rmse(np.array(y_true_user), np.array(y_pred_user)):.3f}")
+y_true_item = np.array(y_true_item)
+y_pred_item = np.array(y_pred_item)
+y_true_user = np.array(y_true_user)
+y_pred_user = np.array(y_pred_user)
 
-# ============================================================
-# 6. RECOMMENDATION FUNCTION
-# ============================================================
+print(f"RMSE (item-based CF, test set): {rmse(y_true_item, y_pred_item):.3f}")
+print(f"RMSE (user-based CF, test set): {rmse(y_true_user, y_pred_user):.3f}")
 
-def recommend_for_user(user_id, R, sim_matrix, mode='item', top_n=5, k=20):
-    """
-    Recommend top-N movies for a given user.
-    """
-    user_idx = user_id - 1  # Convert to 0-based index
+# ============================================
+# 9. Recommendation Function
+# ============================================
+def recommend_for_user(user_id, R_train, sim_matrix, mode='item', top_n=5, k=20):
+    """Generate top-N recommendations for a given user."""
+    user_idx = user_id - 1
     if mode == 'item':
-        preds = predict_item_based(user_idx, sim_matrix, R, k=k)
+        preds = predict_item_based(user_idx, sim_matrix, R_train, k=k)
     elif mode == 'user':
-        preds = predict_user_based(user_idx, sim_matrix, R, k=k)
+        preds = predict_user_based(user_idx, sim_matrix, R_train, k=k)
     else:
         raise ValueError("mode must be 'item' or 'user'")
-    already_rated = R[user_idx] != 0  # Movies already rated
-    preds[already_rated] = -np.inf  # Exclude rated movies
-    top_idx = np.argsort(preds)[-top_n:][::-1]  # Top-N recommendations
-    movie_ids = [rating_matrix.columns[i] for i in top_idx]
+    already_rated = R_train[user_idx] != 0
+    preds[already_rated] = -np.inf
+    preds[np.isnan(preds)] = -np.inf
+    top_idx = np.argsort(preds)[-top_n:][::-1]
+    movie_ids = [rating_matrix_train.columns[i] for i in top_idx]
     info = movies_small.set_index('movieId').loc[movie_ids][['title', 'genres']]
     pred_scores = preds[top_idx]
     return list(zip(info['title'], info['genres'], pred_scores))
 
-# ============================================================
-# 7. VISUALISATION FUNCTION
-# ============================================================
-
-def plot_recommendations(user_id, R, sim_matrix, mode='item', top_n=5, k=20):
-    """
-    Plot top-N recommended movies for a given user.
-    """
-    recs = recommend_for_user(user_id, R, sim_matrix, mode=mode, top_n=top_n, k=k)
+# ============================================
+# 10. Plotting Function
+# ============================================
+def plot_recommendations(user_id, R_train, sim_matrix, mode='item', top_n=5, k=20):
+    """Plot top-N recommended movies for a user."""
+    recs = recommend_for_user(user_id, R_train, sim_matrix, mode=mode, top_n=top_n, k=k)
     titles = [title for title, _, _ in recs]
     scores = [score for _, _, score in recs]
-
     plt.figure(figsize=(10, 6))
     bars = plt.barh(titles[::-1], scores[::-1], color='skyblue')
     plt.xlabel("Predicted Rating")
@@ -158,26 +161,22 @@ def plot_recommendations(user_id, R, sim_matrix, mode='item', top_n=5, k=20):
     plt.title(f"Top {top_n} Recommendations for User {user_id} ({mode.capitalize()}-based CF)")
     plt.xlim(0, 5)
     plt.grid(axis='x', linestyle='--', alpha=0.7)
-
     for bar, score in zip(bars, scores[::-1]):
         plt.text(score + 0.05, bar.get_y() + bar.get_height()/2,
                  f"{score:.2f}", va='center')
-
     plt.show()
 
-# ============================================================
-# 8. DEMO OUTPUT
-# ============================================================
-
-# Print recommendations in text
+# ============================================
+# 11. Demo & Visualization
+# ============================================
 print("\nTop 5 recommendations for User 1 (Item-based):")
-for title, genres, score in recommend_for_user(1, R, item_sim, mode='item'):
+for title, genres, score in recommend_for_user(1, R_train, item_sim, mode='item'):
     print(f"{title} | Genres: {genres} | Predicted rating: {score:.2f}")
 
 print("\nTop 5 recommendations for User 1 (User-based):")
-for title, genres, score in recommend_for_user(1, R, user_sim, mode='user'):
+for title, genres, score in recommend_for_user(1, R_train, user_sim, mode='user'):
     print(f"{title} | Genres: {genres} | Predicted rating: {score:.2f}")
 
-# Show visualisation for User 1
-plot_recommendations(1, R, item_sim, mode='item', top_n=5)
-plot_recommendations(1, R, user_sim, mode='user', top_n=5)
+# Example plots
+plot_recommendations(1, R_train, item_sim, mode='item', top_n=5)
+plot_recommendations(1, R_train, user_sim, mode='user', top_n=5)

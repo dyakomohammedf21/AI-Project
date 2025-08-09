@@ -1,0 +1,165 @@
+{
+  "name": "My workflow 7",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -592,
+        -16
+      ],
+      "id": "f5161914-ab8b-4bcc-8790-f735b9b5d825",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1BGXGUSYjVMXCC-yzyU_RjC5pxY6ocnO3FGPXleV5X14",
+          "mode": "list",
+          "cachedResultName": "PC Store",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1BGXGUSYjVMXCC-yzyU_RjC5pxY6ocnO3FGPXleV5X14/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 736576910,
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1BGXGUSYjVMXCC-yzyU_RjC5pxY6ocnO3FGPXleV5X14/edit#gid=736576910"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -256,
+        -80
+      ],
+      "id": "c6b9379c-aca9-4ae1-a9b8-0eaa93dd2de2",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "mx0JqHtzwvvCSET6",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.filter(item => {\n  const stock = parseInt(item.json[\"Stock Count\"]);\n  const threshold = parseInt(item.json[\"Minimum Threshold\"]);\n  return stock < threshold;\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        -48
+      ],
+      "id": "ff7ceefc-51e0-4d7f-9bcb-39c20a35dd91",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "jsCode": "const message = items.map(item => {\n  const name = item.json[\"Stock\"];\n  const count = item.json[\"Stock Count\"];\n  const min = item.json[\"Minimum Threshold\"];\n  return ` ${name} – Only ${count} left (Threshold: ${min})`;\n}).join('\\n');\nreturn [{\n  json: {\n    output: message\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        32
+      ],
+      "id": "e80dc3de-3ba8-429c-8b0e-4808f200bf15",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "sendTo": "dyako.yt@gmail.com",
+        "subject": "Low Stock Alert!",
+        "message": "={{ $json.output }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        416,
+        32
+      ],
+      "id": "c0bf213a-f68f-40e4-b5d6-9821c78a8286",
+      "name": "Send a message",
+      "webhookId": "b9bef734-8c85-4738-adf3-57c10e12cdbf",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "5LFTTEMjDBae6yve",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "e2a0f6ba-803c-4413-976c-6a3d82bc4196",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c381e1fccdfe92af60e1291e385cf9555b8e413a24a25365d04b5d90864abba2"
+  },
+  "id": "otzgBHJaZLuQPIwL",
+  "tags": []
+}
